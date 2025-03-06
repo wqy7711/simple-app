@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   QueryCommand,
   QueryCommandInput,
+  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 const ddbDocClient = createDocumentClient();
@@ -17,75 +18,95 @@ export const handler: Handler = async (event, context) => {
         statusCode: 500,
         headers: {
           "content-type": "application/json",
- },
+        },
         body: JSON.stringify({ message: "Missing query parameters" }),
- };
- }
+      };
+    }
     if (!queryParams.movieId) {
       return {
         statusCode: 500,
         headers: {
           "content-type": "application/json",
- },
+        },
         body: JSON.stringify({ message: "Missing movie Id parameter" }),
- };
- }
+      };
+    }
     const movieId = parseInt(queryParams?.movieId);
     let commandInput: QueryCommandInput = {
       TableName: process.env.CAST_TABLE_NAME,
- };
+    };
     if ("roleName" in queryParams) {
       commandInput = {
- ...commandInput,
+        ...commandInput,
         IndexName: "roleIx",
         KeyConditionExpression: "movieId = :m and begins_with(roleName, :r) ",
         ExpressionAttributeValues: {
           ":m": movieId,
           ":r": queryParams.roleName,
- },
- };
- } else if ("actorName" in queryParams) {
+        },
+      };
+    } else if ("actorName" in queryParams) {
       commandInput = {
- ...commandInput,
+        ...commandInput,
         KeyConditionExpression: "movieId = :m and begins_with(actorName, :a) ",
         ExpressionAttributeValues: {
           ":m": movieId,
           ":a": queryParams.actorName,
- },
- };
- } else {
+        },
+      };
+    } else {
       commandInput = {
- ...commandInput,
+        ...commandInput,
         KeyConditionExpression: "movieId = :m",
         ExpressionAttributeValues: {
           ":m": movieId,
- },
- };
- }
+        },
+      };
+    }
 
-    const commandOutput = await ddbDocClient.send(
-      new QueryCommand(commandInput)
- );
+    const commandOutput = await ddbDocClient.send(new QueryCommand(commandInput));
+
+    let responseBody: any = {
+      data: commandOutput.Items,
+    };
+
+    if (queryParams.movie === "true") {
+      const movieCommand = new GetCommand({
+        TableName: process.env.MOVIE_TABLE_NAME,
+        Key: { movieId: movieId },
+      });
+
+      try {
+        const movieResult = await ddbDocClient.send(movieCommand);
+        if (movieResult.Item) {
+          responseBody.movie = {
+            title: movieResult.Item.title,
+            genreIds: movieResult.Item.genreIds,
+            overview: movieResult.Item.overview,
+          };
+        }
+      } catch (error) {
+        console.error("Error fetching movie metadata:", error);
+      }
+    }
 
     return {
       statusCode: 200,
       headers: {
         "content-type": "application/json",
- },
-      body: JSON.stringify({
-        data: commandOutput.Items,
- }),
- };
- } catch (error: any) {
+      },
+      body: JSON.stringify(responseBody),
+    };
+  } catch (error: any) {
     console.log(JSON.stringify(error));
     return {
       statusCode: 500,
       headers: {
         "content-type": "application/json",
- },
+      },
       body: JSON.stringify({ error }),
- };
- }
+    };
+  }
 };
 
 function createDocumentClient() {
@@ -94,10 +115,10 @@ function createDocumentClient() {
     convertEmptyValues: true,
     removeUndefinedValues: true,
     convertClassInstanceToMap: true,
- };
+  };
   const unmarshallOptions = {
     wrapNumbers: false,
- };
+  };
   const translateConfig = { marshallOptions, unmarshallOptions };
   return DynamoDBDocumentClient.from(ddbClient, translateConfig);
 }
